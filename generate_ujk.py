@@ -9,17 +9,7 @@ from docx.oxml.ns import nsdecls
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_FILE_ASESOR = os.path.join(BASE_DIR, "dataset_asesor.xlsx")
-DATASET_FILE_TUK = os.path.join(BASE_DIR, "dataset_ujk.xlsx")
-
-
-TIMEZONE_MAP = {
-    "WIB": [
-        "Banyuwangi", "Bondowoso", "Jember", "Situbondo", "Pasuruan", "Probolinggo"
-    ],
-    "WITA": [
-        "Denpasar", "Gianyar", "Jembrana", "Karangasem", "Buleleng"
-    ]
-}
+DATASET_FILE_TUK = os.path.join(BASE_DIR, "dataset_tuk.xlsx")
 
 
 # 1. PENGELOLAAN DATASET ASESOR
@@ -150,14 +140,6 @@ def pilih_atau_input_tuk():
 def set_cell_background(cell, fill_hex):
     shading_elm = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{fill_hex}"/>')
     cell._tc.get_or_add_tcPr().append(shading_elm)
-
-def detect_timezone(text_location):
-    text_clean = text_location.strip().lower()
-    for tz, locations in TIMEZONE_MAP.items():
-        for loc in locations:
-            if loc.lower() in text_clean:
-                return tz
-    return "WIB"  # Default timezone if not found
 
 def format_tanggal_indo(dt):
     """
