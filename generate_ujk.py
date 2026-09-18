@@ -8,7 +8,8 @@ from docx.oxml.ns import nsdecls
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATASET_FILE = os.path.join(BASE_DIR, "dataset_asesor.xlsx")
+DATASET_FILE_ASESOR = os.path.join(BASE_DIR, "dataset_asesor.xlsx")
+DATASET_FILE_TUK = os.path.join(BASE_DIR, "dataset_ujk.xlsx")
 
 
 TIMEZONE_MAP = {
@@ -20,17 +21,18 @@ TIMEZONE_MAP = {
     ]
 }
 
+
 # 1. PENGELOLAAN DATASET ASESOR
-def load_dataset():
-    if os.path.exists(DATASET_FILE):
-        df = pd.read_excel(DATASET_FILE)
+def load_dataset_asesor():
+    if os.path.exists(DATASET_FILE_ASESOR):
+        df = pd.read_excel(DATASET_FILE_ASESOR)
     else:
         df = pd.DataFrame(columns=["No", "Nama", "No Reg", "Alamat", "No HP"])
-        df.to_excel(DATASET_FILE, index=False)
+        df.to_excel(DATASET_FILE_ASESOR, index=False)
     return df
 
 def save_asesor_baru(nama, no_reg, alamat, nohp):
-    df = load_dataset()
+    df = load_dataset_asesor()
 
     new_entry = {
         "No": len(df) + 1,
@@ -42,12 +44,12 @@ def save_asesor_baru(nama, no_reg, alamat, nohp):
 
     df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
 
-    df.to_excel(DATASET_FILE, index=False)
-    print(f"[+] Data asesor '{nama}' berhasil disimpan ke dataset '{os.path.basename(DATASET_FILE)}'.")
+    df.to_excel(DATASET_FILE_ASESOR, index=False)
+    print(f"[+] Data asesor '{nama}' berhasil disimpan ke dataset '{os.path.basename(DATASET_FILE_ASESOR)}'.")
     return new_entry
 
 def pilih_atau_input_asesor():
-    df = load_dataset()
+    df = load_dataset_asesor()
 
     print ("\n--- PILIH / INPUT DATA ASESOR ---")
     if not df.empty:
@@ -79,6 +81,68 @@ def pilih_atau_input_asesor():
         "noreg": noreg,
         "alamat": alamat,
         "nohp": nohp
+    }
+
+
+# 2. PENGELOLAAN DATASET TUK
+def load_dataset_tuk():
+    if os.path.exists(DATASET_FILE_TUK):
+        df = pd.read_excel(DATASET_FILE_TUK)
+    else:
+        df = pd.DataFrame(columns=["No", "Nama TUK", "Alamat TUK", "Kota TUK", "Zona Waktu"])
+        df.to_excel(DATASET_FILE_TUK, index=False)
+    return df
+
+def save_tuk_baru(nama_tuk, alamat_tuk, kota_tuk, zona_waktu):
+    df = load_dataset_tuk()
+
+    new_entry = {
+        "No": len(df) + 1,
+        "Nama TUK": nama_tuk,
+        "Alamat TUK": alamat_tuk,
+        "Kota TUK": kota_tuk,
+        "Zona Waktu": zona_waktu
+    }
+
+    df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+
+    df.to_excel(DATASET_FILE_TUK, index=False)
+    print(f"[+] Data TUK '{nama_tuk}' berhasil disimpan ke dataset '{os.path.basename(DATASET_FILE_TUK)}'.")
+    return new_entry
+
+def pilih_atau_input_tuk():
+    df = load_dataset_tuk()
+
+    print ("\n--- PILIH / INPUT DATA TUK ---")
+    if not df.empty:
+        print("\nDaftar TUK yang Tersedia:")
+        for idx, row in df.iterrows():
+            print(f" {idx + 1}. {row['Nama TUK']}")
+        print(f" {len(df) + 1}. Input Data TUK Baru")
+
+        pilihan = input(f"\nPilih nomor TUK (1-{len(df) + 1}): ").strip()
+
+        if pilihan.isdigit() and 1 <= int(pilihan) <= len(df):
+            selected_row = df.iloc[int(pilihan) - 1]
+            return {
+                "nama_tuk": str(selected_row["Nama TUK"]),
+                "alamat_tuk": str(selected_row["Alamat TUK"]),
+                "kota_tuk": str(selected_row["Kota TUK"]),
+                "zona_waktu": str(selected_row["Zona Waktu"])
+            }
+
+    print("\n[Info] Input Data TUK Baru:")
+    nama_tuk = input("Nama TUK: ").strip()  
+    alamat_tuk = input("Alamat TUK: ").strip()
+    kota_tuk = input("Kota TUK: ").strip()
+    zona_waktu = input("Zona Waktu (WIB/WITA): ").strip().upper()
+
+    save_tuk_baru(nama_tuk, alamat_tuk, kota_tuk, zona_waktu)
+    return {
+        "nama_tuk": nama_tuk,
+        "alamat_tuk": alamat_tuk,
+        "kota_tuk": kota_tuk,
+        "zona_waktu": zona_waktu
     }
 
 
@@ -245,16 +309,12 @@ def main():
         print(f"[!] Warning: Folder skema '{kode_skema}' tidak ditemukan. Menggunakan template default.")
 
     nama_skema = input("Nama Skema : ").strip()
-    nama_tuk = input("Nama TUK (contoh: UPTD BLK Jember): ").strip()
-    alamat_tuk = input("Alamat TUK: ").strip()
-    
-    default_kota = extract_default_city(nama_tuk)
-    kota_input = input(f"Kota Lokasi TUK (Default: {default_kota}): ").strip()
-    kota_tuk = kota_input if kota_input else default_kota
 
-    detected_timezone = detect_timezone(f"{kota_tuk}")
-    tz_input = input(f"Zona Waktu (Default: {detected_timezone}): ").strip().upper()
-    zona_waktu = tz_input if tz_input in TIMEZONE_MAP else detected_timezone
+    data_tuk = pilih_atau_input_tuk()
+    nama_tuk = data_tuk["nama_tuk"]
+    alamat_tuk = data_tuk["alamat_tuk"]
+    kota_tuk = data_tuk["kota_tuk"]
+    zona_waktu = data_tuk["zona_waktu"] 
 
     nama_kejuruan = input("Nama Kejuruan (contoh: Las): ").strip()
 
