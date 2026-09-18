@@ -1,10 +1,14 @@
 import os
 import math
+import pandas as pd
 from datetime import datetime
 from docx import Document
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATASET_FILE = os.path.join(BASE_DIR, "dataset_asesor.xlsx")
 
 
 TIMEZONE_MAP = {
@@ -16,11 +20,78 @@ TIMEZONE_MAP = {
     ]
 }
 
+# 1. PENGELOLAAN DATASET ASESOR
+def load_dataset():
+    if os.path.exists(DATASET_FILE):
+        df = pd.read_excel(DATASET_FILE)
+    else:
+        df = pd.DataFrame(columns=["No", "Nama", "No Reg", "Alamat", "No HP"])
+        df.to_excel(DATASET_FILE, index=False)
+    return df
+
+def save_asesor_baru(nama, no_reg, alamat, nohp):
+    df = load_dataset()
+
+    new_entry = {
+        "No": len(df) + 1,
+        "Nama": nama,
+        "No Reg": no_reg,
+        "Alamat": alamat,
+        "No HP": nohp
+    }
+
+    df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+
+    df.to_excel(DATASET_FILE, index=False)
+    print(f"[+] Data asesor '{nama}' berhasil disimpan ke dataset '{os.path.basename(DATASET_FILE)}'.")
+    return new_entry
+
+def pilih_atau_input_asesor():
+    df = load_dataset()
+
+    print ("\n--- PILIH / INPUT DATA ASESOR ---")
+    if not df.empty:
+        print("\nDaftar Asesor yang Tersedia:")
+        for idx, row in df.iterrows():
+            print(f" {idx + 1}. {row['Nama']} (No Reg: {row['No Reg']})")
+        print(f" {len(df) + 1}. Input Data Asesor Baru")
+
+        pilihan = input(f"\nPilih nomor asesor (1-{len(df) + 1}): ").strip()
+
+        if pilihan.isdigit() and 1 <= int(pilihan) <= len(df):
+            selected_row = df.iloc[int(pilihan) - 1]
+            return {
+                "nama": str(selected_row["Nama"]),
+                "noreg": str(selected_row["No Reg"]),
+                "alamat": str(selected_row["Alamat"]),
+                "nohp": str(selected_row["No HP"])
+            }
+
+    print("\n[Info] Input Data Asesor Baru:")
+    nama = input("Nama Asesor: ").strip()  
+    noreg = input("No. Reg Asesor: ").strip()
+    alamat = input("Alamat Asesor: ").strip()
+    nohp = input("No. HP Asesor: ").strip()
+
+    save_asesor_baru(nama, noreg, alamat, nohp)
+    return {
+        "nama": nama,
+        "noreg": noreg,
+        "alamat": alamat,
+        "nohp": nohp
+    }
+
+
+# 2. HELPER UTILS & FORMATTING
+def set_cell_background(cell, fill_hex):
+    shading_elm = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{fill_hex}"/>')
+    cell._tc.get_or_add_tcPr().append(shading_elm)
+
 def detect_timezone(text_location):
     text_clean = text_location.strip().lower()
     for tz, locations in TIMEZONE_MAP.items():
         for loc in locations:
-            if loc in text_clean:
+            if loc.lower() in text_clean:
                 return tz
     return "WIB"  # Default timezone if not found
 
@@ -98,6 +169,25 @@ def replace_placeholders_in_doc(doc, data_dict):
                 for p in cell.paragraphs:
                     replace_placeholder_in_paragraph(p, data_dict)
 
+            has_empty_marker = any(cell.text.strip() == "-" for cell in row.cells)
+
+            if has_empty_marker:
+                for cell in row.cells:
+                    tcPr = cell._tc.get_or_add_tcPr()
+                    vMerge = tcPr.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}vMerge')
+
+                    vMerge_val = vMerge.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val') if vMerge is not None else None
+
+                    if vMerge_val == "restart":
+                        continue
+                    
+                    for p in cell.paragraphs:
+                        if p.text.strip() == "-":
+                            p.text = ""  # Kosongkan teks
+                        # Jika cell kosong, beri background abu-abu muda
+                    set_cell_background(cell, "D3D3D3")  # Hex untuk abu-abu muda
+                
+
 def split_asesi_balanced(list_asesi):
     """
     Membagi daftar asesi menjadi 2 hari secara seimbang (maksimal 8 per hari).
@@ -130,6 +220,8 @@ def build_asesi_data(base_data, hari, tanggal, asesi_list):
         data[f"{{{{ ASESI_{idx} }}}}"] = val
     return data
 
+
+# 3. MAIN FUNCTION
 def main():
     print("==================================================")
     print("      OTOMATISASI PENGISIAN BERITA ACARA UJK      ")
@@ -160,16 +252,17 @@ def main():
     kota_input = input(f"Kota Lokasi TUK (Default: {default_kota}): ").strip()
     kota_tuk = kota_input if kota_input else default_kota
 
-    detected_timezone = detect_timezone(f"{nama_tuk} {kota_tuk}")
+    detected_timezone = detect_timezone(f"{kota_tuk}")
     tz_input = input(f"Zona Waktu (Default: {detected_timezone}): ").strip().upper()
     zona_waktu = tz_input if tz_input in TIMEZONE_MAP else detected_timezone
 
     nama_kejuruan = input("Nama Kejuruan (contoh: Las): ").strip()
 
-    nama_asesor = input("Nama Asesor : ").strip()
-    no_reg_asesor = input("No. Reg Asesor: ").strip()
-    alamat_asesor = input("Alamat Asesor: ").strip()
-    nohp_asesor = input("No. HP Asesor: ").strip()
+    data_asesor = pilih_atau_input_asesor()
+    nama_asesor = data_asesor["nama"]
+    no_reg_asesor = data_asesor["noreg"]
+    alamat_asesor = data_asesor["alamat"]
+    nohp_asesor = data_asesor["nohp"]
 
     # Sanitasi Nama Asesor untuk Penamaan File (Menghilangkan Karakter Ilegal File Windows)
     nama_depan_asesor = nama_asesor.strip().split()[0] if nama_asesor.strip() else "ASESOR"
@@ -363,7 +456,7 @@ def main():
                 relative_template,
                 (data_h1, data_h2, is_two_days) if is_rekap else data_h1,
                 is_paired=is_rekap,
-                asesor_name=f"{clean_nama_asesor}_{kode_skema}" if is_rekap else "",
+                asesor_name=f"{clean_nama_asesor}" if is_rekap else "",
             )
     else:
         print(f"[!] Warning: Folder skema '{kode_skema}' tidak ditemukan.")
