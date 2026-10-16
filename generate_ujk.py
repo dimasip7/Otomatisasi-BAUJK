@@ -307,7 +307,12 @@ def main():
     nohp_asesor = data_asesor["nohp"]
 
     # Sanitasi Nama Asesor untuk Penamaan File (Menghilangkan Karakter Ilegal File Windows)
-    nama_depan_asesor = nama_asesor.strip().split()[0] if nama_asesor.strip() else "ASESOR"
+    words = nama_asesor.strip().split()
+    prefix_umum = ["i", "ni"]
+    if words and words[0].lower() in prefix_umum and len(words) > 1:
+        nama_depan_asesor = f"{words[0]} {words[1]} {words[2]}" if len(words) > 2 else f"{words[0]} {words[1]}"
+    else:
+        nama_depan_asesor = words[0] if words else "ASESOR"
     clean_nama_asesor = "".join([c for c in nama_depan_asesor if c.isalnum() or c in (' ', '_', '-')]).strip()
 
     # --- 2. INPUT DATA HARI & TANGGAL UJK ---
