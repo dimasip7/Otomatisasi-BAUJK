@@ -25,7 +25,7 @@ def save_asesor_baru(nama, no_reg, alamat, nohp):
     df = load_dataset_asesor()
 
     new_entry = {
-        "No": len(df) + 1,
+        "No": 0,
         "Nama": nama,
         "No Reg": no_reg,
         "Alamat": alamat,
@@ -33,6 +33,10 @@ def save_asesor_baru(nama, no_reg, alamat, nohp):
     }
 
     df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+
+    df = df.sort_values(by="Nama", key=lambda col: col.str.lower(), ascending=True).reset_index(drop=True)
+
+    df["No"] = range(1, len(df) + 1)
 
     df.to_excel(DATASET_FILE_ASESOR, index=False)
     print(f"[+] Data asesor '{nama}' berhasil disimpan ke dataset '{os.path.basename(DATASET_FILE_ASESOR)}'.")
@@ -43,6 +47,8 @@ def pilih_atau_input_asesor():
 
     print ("\n--- PILIH / INPUT DATA ASESOR ---")
     if not df.empty:
+        df.sort_values(by="Nama", key=lambda col: col.str.lower(), ascending=True).reset_index(drop=True)
+
         print("\nDaftar Asesor yang Tersedia:")
         for idx, row in df.iterrows():
             print(f" {idx + 1}. {row['Nama']} (No Reg: {row['No Reg']})")
@@ -87,7 +93,7 @@ def save_tuk_baru(nama_tuk, alamat_tuk, kota_tuk, zona_waktu):
     df = load_dataset_tuk()
 
     new_entry = {
-        "No": len(df) + 1,
+        "No": 0,
         "Nama TUK": nama_tuk,
         "Alamat TUK": alamat_tuk,
         "Kota TUK": kota_tuk,
@@ -95,6 +101,10 @@ def save_tuk_baru(nama_tuk, alamat_tuk, kota_tuk, zona_waktu):
     }
 
     df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+
+    df = df.sort_values(by="Zona Waktu", key=lambda col: col.str.lower(), ascending=True).reset_index(drop=True)
+        
+    df["No"] = range(1, len(df) + 1)
 
     df.to_excel(DATASET_FILE_TUK, index=False)
     print(f"[+] Data TUK '{nama_tuk}' berhasil disimpan ke dataset '{os.path.basename(DATASET_FILE_TUK)}'.")
@@ -105,6 +115,8 @@ def pilih_atau_input_tuk():
 
     print ("\n--- PILIH / INPUT DATA TUK ---")
     if not df.empty:
+        df.sort_values(by="Zona Waktu", key=lambda col: col.str.lower(), ascending=True).reset_index(drop=True)
+        
         print("\nDaftar TUK yang Tersedia:")
         for idx, row in df.iterrows():
             print(f" {idx + 1}. {row['Nama TUK']}")
@@ -308,7 +320,7 @@ def main():
 
     # Sanitasi Nama Asesor untuk Penamaan File (Menghilangkan Karakter Ilegal File Windows)
     words = nama_asesor.strip().split()
-    prefix_umum = ["i", "ni"]
+    prefix_umum = ["i", "ni", "m.", "dr.", "drs.", "ir.", "prof.", "prof.dr.", "prof.dr.ir."]
     if words and words[0].lower() in prefix_umum and len(words) > 1:
         nama_depan_asesor = f"{words[0]} {words[1]} {words[2]}" if len(words) > 2 else f"{words[0]} {words[1]}"
     else:
