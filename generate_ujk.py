@@ -1,5 +1,6 @@
 import os
 import math
+from copy import deepcopy
 import pandas as pd
 from datetime import datetime
 from docx import Document
@@ -248,10 +249,10 @@ def replace_placeholders_in_doc(doc, data_dict):
 
 def split_asesi_balanced(list_asesi):
     """
-    Membagi daftar asesi menjadi 2 hari secara seimbang (maksimal 8 per hari).
+    Membagi daftar asesi lebih dari 12 orang menjadi 2 hari secara seimbang.
     """
     total = len(list_asesi)
-    if total <= 8:
+    if total <= 12:
         return list_asesi, []
     
     half = math.ceil(total / 2)
@@ -273,11 +274,44 @@ def build_asesi_data(base_data, hari, tanggal, asesi_list):
     data = base_data.copy()
     data["{{ HARI_UJK }}"] = hari
     data["{{ TANGGAL_UJK }}"] = tanggal
-    for idx in range(1, 9):
+    for idx in range(1, max(8, len(asesi_list)) + 1):
         val = asesi_list[idx-1] if idx <= len(asesi_list) else "-"
         data[f"{{{{ ASESI_{idx} }}}}"] = val
     return data
 
+
+def expand_rows(doc, asesi_list):
+    target_count = len(asesi_list)
+    if target_count <= 8:
+        return
+
+    for table in doc.tables:
+        template_row_index = next(
+            (
+                row_index
+                for row_index, row in enumerate(table.rows)
+                if any("{{ ASESI_8 }}" in cell.text for cell in row.cells)
+            ),
+            None,
+        )
+        if template_row_index is None:
+            continue
+
+        template_row = table.rows[template_row_index]
+        insert_after = template_row._tr
+
+        for new_row_num in range(9, target_count + 1):
+            new_row_xml = deepcopy(template_row._tr)
+            insert_after.addnext(new_row_xml)
+            insert_after = new_row_xml
+
+            new_row = table.rows[template_row_index + new_row_num - 8]
+            for cell in new_row.cells:
+                for paragraph in cell.paragraphs:
+                    replace_placeholder_in_paragraph(
+                        paragraph,
+                        {"{{ ASESI_8 }}": f"{{{{ ASESI_{new_row_num} }}}}"},
+                    )
 
 # 3. MAIN FUNCTION
 def main():
@@ -360,13 +394,13 @@ def main():
     is_two_days = len(asesi_hari2) > 0
     hari_2, tgl_2 = "", ""
     if is_two_days:
-        print(f"\n[Info] Total asesi ({len(list_asesi)} orang) > 8, dibagi 2 hari secara seimbang:")
+        print(f"\n[Info] Total asesi ({len(list_asesi)} orang) > 12, dibagi 2 hari secara seimbang:")
         print(f"  - Hari 1: {len(asesi_hari1)} orang")
         print(f"  - Hari 2: {len(asesi_hari2)} orang")
         hari_2 = input("Hari UJK - Hari 2 (contoh: Rabu): ").strip()
         tgl_2 = input("Tanggal UJK - Hari 2 (contoh: 16 September 2026): ").strip()
     else:
-        print(f"\n[Info] Total asesi ({len(list_asesi)} orang) <= 8, hanya diproses untuk 1 HARI UJK.")
+        print(f"\n[Info] Total asesi ({len(list_asesi)} orang) <= 12, hanya diproses untuk 1 HARI UJK.")
 
     # Dictionary Data Umum
     common_data = {
@@ -432,7 +466,7 @@ def main():
             print(f"  [!] Error saat menyimpan: {str(e)}")
             return False
 
-    def process_template_file(tmpl_filename, data_dict, is_paired=False, asesor_name=""):
+    def process_template_file(tmpl_filename, data_dict, asesi_list_for_check=None, is_paired=False, asesor_name=""):
         """
         Memproses satu template file dan menyimpan hasilnya.
         
@@ -455,6 +489,8 @@ def main():
             data_h1, data_h2, create_day2 = data_dict
             # Dokumen Hari 1
             doc1 = Document(path_in)
+            if asesi_list_for_check:
+                expand_rows(doc1, asesi_list_for_check[0])
             replace_placeholders_in_doc(doc1, data_h1)
             output_filename_1 = f"{base_name} - {asesor_name} 1{ext}"
             path_out_1 = os.path.join(folder_output, output_filename_1)
@@ -464,6 +500,8 @@ def main():
             # Dokumen Hari 2 (jika ada)
             if create_day2:
                 doc2 = Document(path_in)
+                if asesi_list_for_check:
+                    expand_rows(doc2, asesi_list_for_check[1])
                 replace_placeholders_in_doc(doc2, data_h2)
                 output_filename_2 = f"{base_name} - {asesor_name} 2{ext}"
                 path_out_2 = os.path.join(folder_output, output_filename_2)
@@ -471,6 +509,8 @@ def main():
                     print(f"  [+] Berhasil dibuat: {output_filename_2}")
         else:
             doc = Document(path_in)
+            if asesi_list_for_check:
+                expand_rows(doc, asesi_list_for_check)
             replace_placeholders_in_doc(doc, data_dict)
             output_filename = f"{base_name}{ext}"
             path_out = os.path.join(folder_output, output_filename)
@@ -494,6 +534,7 @@ def main():
     for tmpl in templates_master_paired_umum:
         path_template = os.path.join("umum", tmpl)
         process_template_file(path_template, (data_h1, data_h2, is_two_days), 
+                              asesi_list_for_check=(asesi_hari1, asesi_hari2),
                               is_paired=True, asesor_name=clean_nama_asesor)
 
     # Proses semua dokumen .docx di folder skema yang dipilih.
@@ -514,6 +555,7 @@ def main():
             process_template_file(
                 relative_template,
                 (data_h1, data_h2, is_two_days) if is_rekap else data_h1,
+                asesi_list_for_check=(asesi_hari1, asesi_hari2) if is_rekap else None,
                 is_paired=is_rekap,
                 asesor_name=f"{clean_nama_asesor}" if is_rekap else "",
             )
