@@ -4,13 +4,16 @@ from copy import deepcopy
 import pandas as pd
 from datetime import datetime
 from docx import Document
-from docx.oxml import parse_xml
-from docx.oxml.ns import nsdecls
+from docx.oxml import parse_xml, OxmlElement
+from docx.oxml.ns import nsdecls, qn
+from docx.table import _Cell
+from docx.enum.table import WD_ALIGN_VERTICAL
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_FILE_ASESOR = os.path.join(BASE_DIR, "dataset_asesor.xlsx")
 DATASET_FILE_TUK = os.path.join(BASE_DIR, "dataset_tuk.xlsx")
+TTD_SPAN = 2
 
 
 # 1. PENGELOLAAN DATASET ASESOR
@@ -279,39 +282,149 @@ def build_asesi_data(base_data, hari, tanggal, asesi_list):
         data[f"{{{{ ASESI_{idx} }}}}"] = val
     return data
 
+def _tr_text(tr):
+    """Teks seluruh baris, tanpa menelusuri merge (aman untuk vMerge)."""
+    return "".join(t.text or "" for t in tr.iter(qn("w:t")))
 
-def expand_rows(doc, asesi_list):
+
+def _find_row_idx(table, marker):
+    """Cari indeks baris (di XML) yang memuat marker, mis. '{{ ASESI_8 }}'."""
+    for i, tr in enumerate(table._tbl.tr_lst):
+        if marker in _tr_text(tr):
+            return i
+    return None
+
+
+def _replace_in_tr(tr, old, new):
+    """Ganti placeholder di baris. Menangani teks yang terpecah antar run."""
+    for p in tr.iter(qn("w:p")):
+        ts = list(p.iter(qn("w:t")))
+        if not ts:
+            continue
+        full = "".join(t.text or "" for t in ts)
+        if old not in full:
+            continue
+        # taruh seluruh teks hasil ganti di run pertama, kosongkan sisanya
+        ts[0].text = full.replace(old, new)
+        for t in ts[1:]:
+            t.text = ""
+
+
+def _set_vmerge(tc, mode):
+    """mode: None (tanpa merge), 'restart', atau 'continue'."""
+    tcPr = tc.get_or_add_tcPr()
+    for el in tcPr.findall(qn("w:vMerge")):
+        tcPr.remove(el)
+    if mode is None:
+        return
+    vm = OxmlElement("w:vMerge")
+    if mode == "restart":
+        vm.set(qn("w:val"), "restart")
+    anchor = None
+    for tag in ("w:hMerge", "w:gridSpan", "w:tcW"):
+        found = tcPr.find(qn(tag))
+        if found is not None:
+            anchor = found
+            break
+    if anchor is not None:
+        anchor.addnext(vm)
+    else:
+        tcPr.insert(0, vm)
+
+
+def _set_cell_text(tc, table, text):
+    cell = _Cell(tc, table)
+    for p in cell.paragraphs[1:]:
+        p._p.getparent().remove(p._p)
+    para = cell.paragraphs[0]
+    if para.runs:
+        para.runs[0].text = text
+        for r in para.runs[1:]:
+            r._r.getparent().remove(r._r)
+    else:
+        para.add_run(text)
+
+
+def rebuild_ttd_columns(table, first_row_idx, count, ttd_cols=2, real_count=None):
+    """
+    count      : jumlah baris (sudah genap)
+    real_count : jumlah asesi sebenarnya; nomor TTD di atasnya dikosongkan
+    """
+    if real_count is None:
+        real_count = count
+
+    trs = table._tbl.tr_lst
+    rows = [trs[first_row_idx + i] for i in range(count)]
+
+    # 1) reset semua sel TTD
+    for tr in rows:
+        for tc in tr.tc_lst[-ttd_cols:]:
+            _set_vmerge(tc, None)
+            _set_cell_text(tc, table, "")
+
+    # 2) isi per pasangan baris (count selalu genap)
+    for start in range(0, count, 2):
+        left_top = rows[start].tc_lst[-ttd_cols:][0]
+        right_top = rows[start].tc_lst[-ttd_cols:][1]
+        left_bot = rows[start + 1].tc_lst[-ttd_cols:][0]
+        right_bot = rows[start + 1].tc_lst[-ttd_cols:][1]
+
+        n_left, n_right = start + 1, start + 2
+
+        # nomor hanya ditulis untuk asesi yang benar-benar ada
+        _set_cell_text(left_top, table, f"{n_left}." if n_left <= real_count else "")
+        _Cell(left_top, table).vertical_alignment = WD_ALIGN_VERTICAL.TOP
+
+        _set_cell_text(right_top, table, f"{n_right}." if n_right <= real_count else "")
+        _Cell(right_top, table).vertical_alignment = WD_ALIGN_VERTICAL.BOTTOM
+
+        _set_vmerge(left_top, "restart")
+        _set_vmerge(left_bot, "continue")
+        _set_vmerge(right_top, "restart")
+        _set_vmerge(right_bot, "continue")
+
+def _is_ttd_table(table):
+    """Deteksi tabel daftar hadir: header memuat 'Tanda Tangan'."""
+    for tr in table._tbl.tr_lst[:3]:  # cukup cek beberapa baris header
+        if "tanda tangan" in _tr_text(tr).lower():
+            return True
+    return False
+
+def expand_rows(doc, asesi_list, with_ttd=None):
     target_count = len(asesi_list)
     if target_count <= 8:
         return
 
     for table in doc.tables:
-        template_row_index = next(
-            (
-                row_index
-                for row_index, row in enumerate(table.rows)
-                if any("{{ ASESI_8 }}" in cell.text for cell in row.cells)
-            ),
-            None,
-        )
-        if template_row_index is None:
+        tmpl_idx = _find_row_idx(table, "{{ ASESI_8 }}")
+        if tmpl_idx is None:
+            continue
+        first_idx = _find_row_idx(table, "{{ ASESI_1 }}")
+        if first_idx is None:
             continue
 
-        template_row = table.rows[template_row_index]
-        insert_after = template_row._tr
+        use_ttd = _is_ttd_table(table) if with_ttd is None else with_ttd
 
-        for new_row_num in range(9, target_count + 1):
-            new_row_xml = deepcopy(template_row._tr)
-            insert_after.addnext(new_row_xml)
-            insert_after = new_row_xml
+        # tabel TTD dibulatkan ke genap, tabel lain sesuai jumlah asli
+        row_count = target_count + (target_count % 2) if use_ttd else target_count
 
-            new_row = table.rows[template_row_index + new_row_num - 8]
-            for cell in new_row.cells:
-                for paragraph in cell.paragraphs:
-                    replace_placeholder_in_paragraph(
-                        paragraph,
-                        {"{{ ASESI_8 }}": f"{{{{ ASESI_{new_row_num} }}}}"},
-                    )
+        template_tr = table._tbl.tr_lst[tmpl_idx]
+        insert_after = template_tr
+
+        for new_num in range(9, row_count + 1):
+            new_tr = deepcopy(template_tr)
+            insert_after.addnext(new_tr)
+            insert_after = new_tr
+
+            if new_num > target_count:
+                # baris pengisi: pakai "-" agar otomatis jadi abu-abu
+                _replace_in_tr(new_tr, "{{ ASESI_8 }}", "-")
+            else:
+                _replace_in_tr(new_tr, "{{ ASESI_8 }}", f"{{{{ ASESI_{new_num} }}}}")
+
+        if use_ttd:
+            rebuild_ttd_columns(table, first_idx, row_count,
+                                ttd_cols=2, real_count=target_count)
 
 # 3. MAIN FUNCTION
 def main():
