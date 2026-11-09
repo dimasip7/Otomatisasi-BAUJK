@@ -723,12 +723,12 @@ def main():
     data_combined_upper = upper_values({**common_data, **asesor_placeholders(asesor_1)})
     for n, asesor in enumerate((asesor_1, asesor_2), 1):
         data_combined_upper.update(upper_values(asesor_placeholders(asesor, f"_{n}")))
-    data_combined_upper.update({
+    data_combined_upper.update(upper_values({
         "{{ HARI_UJK_1 }}": hari_1,
         "{{ TANGGAL_UJK_1 }}": tgl_1,
         "{{ HARI_UJK_2 }}": hari_2,
         "{{ TANGGAL_UJK_2 }}": tgl_2,
-    })
+    }))
 
     # --- 4. Pemrosesan template ---
     os.makedirs(FOLDER_OUTPUT, exist_ok=True)
