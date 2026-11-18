@@ -11,17 +11,14 @@ from docx.oxml.ns import nsdecls, qn
 from docx.table import _Cell
 
 
-# =============================================================================
-# KONSTANTA
-# =============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_FILE_ASESOR = os.path.join(BASE_DIR, "dataset_asesor.xlsx")
 DATASET_FILE_TUK = os.path.join(BASE_DIR, "dataset_tuk.xlsx")
 FOLDER_TEMPLATE = os.path.join(BASE_DIR, "templates")
 FOLDER_OUTPUT = os.path.join(BASE_DIR, "output_ujk")
 
-DEFAULT_ROWS = 8          # jumlah baris asesi bawaan di template
-MAX_ASESI_PER_HARI = 12   # lebih dari ini dibagi menjadi 2 hari
+DEFAULT_ROWS = 8
+MAX_ASESI_PER_HARI = 12
 
 BULAN_INDO = [
     "Januari", "Februari", "Maret", "April", "Mei", "Juni",
@@ -33,8 +30,8 @@ ASESOR_TAGS = {
     "alamat": "ALAMAT_ASESOR",
     "nohp": "NOHP_ASESOR",
 }
-JUDUL_LIST_DOKUMEN = "LIST DOKUMEN UJI"  # judul tiap halaman di template LIST DOKUMEN UJI
-PREFIX_NAMA_UMUM = ["i", "ni", "m.", "dr.", "drs.", "ir.", "prof.", "prof.dr.", "prof.dr.ir."]
+JUDUL_LIST_DOKUMEN = "LIST DOKUMEN UJI"
+PREFIX_NAMA_UMUM = ["i", "ni", "m.", "dr.", "drs.", "ir.", "prof.", "prof.dr.", "prof.dr.ir.", "muhammad", "muhamad", "mohammad", "mohamad"]
 
 TEMPLATE_UMUM_BERPASANGAN = [
     "01. PERNYATAAN KERAHASIAAN.docx",
@@ -46,11 +43,7 @@ TEMPLATE_UMUM_BERPASANGAN = [
 ]
 
 
-# =============================================================================
-# 1. DATASET (ASESOR & TUK)
-# =============================================================================
 def _load_dataset(path, columns):
-    """Baca dataset Excel; jika belum ada, buat file kosong dengan kolom `columns`."""
     if os.path.exists(path):
         return pd.read_excel(path)
     df = pd.DataFrame(columns=columns)
@@ -59,7 +52,6 @@ def _load_dataset(path, columns):
 
 
 def _append_and_save(df, entry, sort_col, path):
-    """Tambah satu baris, urutkan berdasarkan `sort_col`, isi ulang nomor, simpan."""
     df = pd.concat([df, pd.DataFrame([entry])], ignore_index=True)
     df = df.sort_values(by=sort_col, key=lambda col: col.str.lower()).reset_index(drop=True)
     df["No"] = range(1, len(df) + 1)
@@ -178,20 +170,12 @@ def pilih_atau_input_tuk():
     }
 
 
-# =============================================================================
-# 2. HELPER UMUM
-# =============================================================================
 def format_tanggal_indo(dt):
-    """Contoh: 30 Agustus 2026"""
     return f"{dt.day:02d} {BULAN_INDO[dt.month - 1]} {dt.year}"
 
 
 def split_asesi_balanced(list_asesi, force=False):
-    """
-    Bagi asesi menjadi 2 kelompok seimbang.
-    - 1 asesor : dibagi per hari, hanya jika melebihi MAX_ASESI_PER_HARI
-    - 2 asesor : dibagi per asesor, selalu (force=True)
-    """
+    """Bagi asesi menjadi 2 kelompok bila force=True (2 asesor) atau jumlah melebihi MAX_ASESI_PER_HARI."""
     if not force and len(list_asesi) <= MAX_ASESI_PER_HARI:
         return list_asesi, []
     half = math.ceil(len(list_asesi) / 2)
@@ -199,17 +183,14 @@ def split_asesi_balanced(list_asesi, force=False):
 
 
 def asesor_placeholders(asesor, suffix=""):
-    """Placeholder data asesor, mis. {{ NAMA_ASESOR }} atau {{ NAMA_ASESOR_2 }} jika suffix='_2'."""
     return {f"{{{{ {tag}{suffix} }}}}": asesor[key] for key, tag in ASESOR_TAGS.items()}
 
 
 def upper_values(data):
-    """Ubah semua nilai string pada dict menjadi huruf kapital."""
     return {k: (v.upper() if isinstance(v, str) else v) for k, v in data.items()}
 
 
 def build_asesi_data(base_data, hari, tanggal, asesi_list):
-    """Gabungkan data umum dengan hari, tanggal, dan placeholder ASESI_n."""
     data = base_data.copy()
     data["{{ HARI_UJK }}"] = hari
     data["{{ TANGGAL_UJK }}"] = tanggal
@@ -219,7 +200,7 @@ def build_asesi_data(base_data, hari, tanggal, asesi_list):
 
 
 def buat_nama_file_asesor(nama_asesor):
-    """Ambil nama (maks. 3 kata jika diawali gelar/prefix) yang aman untuk nama file Windows."""
+    """Ambil nama (maksimal 3 kata jika diawali gelar) yang aman untuk nama file Windows."""
     words = nama_asesor.strip().split()
     if len(words) > 1 and words[0].lower() in PREFIX_NAMA_UMUM:
         nama = " ".join(words[:3])
@@ -228,9 +209,6 @@ def buat_nama_file_asesor(nama_asesor):
     return "".join(c for c in nama if c.isalnum() or c in (" ", "_", "-")).strip()
 
 
-# =============================================================================
-# 3. PENGGANTIAN PLACEHOLDER DI DOKUMEN WORD
-# =============================================================================
 def set_cell_background(cell, fill_hex):
     shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{fill_hex}"/>')
     cell._tc.get_or_add_tcPr().append(shading)
@@ -242,14 +220,12 @@ def replace_placeholder_in_paragraph(paragraph, data_dict):
     if not keys:
         return
 
-    # Kasus 1: placeholder utuh dalam satu run
     for run in paragraph.runs:
         for key in keys:
             if key in run.text:
                 run.text = run.text.replace(key, str(data_dict[key]))
 
-    # Kasus 2: placeholder terpecah antar run -> gabung ke run pertama
-    # (format run pertama otomatis dipertahankan)
+    # Gabungkan ke run pertama bila tag placeholder terpecah antar run oleh Word.
     if paragraph.runs and any(k in paragraph.text for k in keys):
         new_text = paragraph.text
         for key, val in data_dict.items():
@@ -260,7 +236,7 @@ def replace_placeholder_in_paragraph(paragraph, data_dict):
 
 
 def _gray_out_empty_row(row):
-    """Kosongkan teks '-' dan beri latar abu-abu pada seluruh sel baris (kecuali vMerge 'restart')."""
+    """Kosongkan penanda '-' dan beri latar abu-abu kecuali pada sel vMerge restart."""
     for cell in row.cells:
         vmerge = cell._tc.get_or_add_tcPr().find(qn("w:vMerge"))
         if vmerge is not None and vmerge.get(qn("w:val")) == "restart":
@@ -273,7 +249,6 @@ def _gray_out_empty_row(row):
 
 
 def replace_placeholders_in_doc(doc, data_dict):
-    """Ganti seluruh placeholder {{ TAG }} di paragraf dan tabel."""
     for p in doc.paragraphs:
         replace_placeholder_in_paragraph(p, data_dict)
 
@@ -283,21 +258,16 @@ def replace_placeholders_in_doc(doc, data_dict):
                 for p in cell.paragraphs:
                     replace_placeholder_in_paragraph(p, data_dict)
 
-            # baris yang berisi penanda "-" = baris kosong -> diwarnai abu-abu
             if any(cell.text.strip() == "-" for cell in row.cells):
                 _gray_out_empty_row(row)
 
 
-# =============================================================================
-# 4. PERLUASAN BARIS TABEL ASESI
-# =============================================================================
 def _elem_text(el):
-    """Teks seluruh elemen XML (baris atau paragraf) tanpa menelusuri merge (aman untuk vMerge)."""
+    """Baca teks elemen XML secara langsung tanpa menelusuri sel merge."""
     return "".join(t.text or "" for t in el.iter(qn("w:t")))
 
 
 def _find_row_idx(table, marker):
-    """Indeks baris (di XML) yang memuat `marker`, mis. '{{ ASESI_8 }}'."""
     for i, tr in enumerate(table._tbl.tr_lst):
         if marker in _elem_text(tr):
             return i
@@ -305,7 +275,6 @@ def _find_row_idx(table, marker):
 
 
 def _replace_in_tr(tr, old, new):
-    """Ganti placeholder di satu baris; teks yang terpecah antar run digabung ke run pertama."""
     for p in tr.iter(qn("w:p")):
         ts = list(p.iter(qn("w:t")))
         if not ts:
@@ -319,12 +288,10 @@ def _replace_in_tr(tr, old, new):
 
 
 def _is_ttd_table(table):
-    """Tabel daftar hadir = header (3 baris pertama) memuat 'Tanda Tangan'."""
     return any("tanda tangan" in _elem_text(tr).lower() for tr in table._tbl.tr_lst[:3])
 
 
 def _set_vmerge(tc, mode):
-    """mode: None (tanpa merge), 'restart', atau 'continue'."""
     tcPr = tc.get_or_add_tcPr()
     for el in tcPr.findall(qn("w:vMerge")):
         tcPr.remove(el)
@@ -335,7 +302,7 @@ def _set_vmerge(tc, mode):
     if mode == "restart":
         vm.set(qn("w:val"), "restart")
 
-    # sisipkan sesuai urutan skema: tcW, gridSpan, hMerge, vMerge, ...
+    # Urutan skema OOXML mengharuskan vMerge ditempatkan setelah tcW, gridSpan, atau hMerge.
     anchor = next(
         (el for el in (tcPr.find(qn(tag)) for tag in ("w:hMerge", "w:gridSpan", "w:tcW")) if el is not None),
         None,
@@ -347,7 +314,6 @@ def _set_vmerge(tc, mode):
 
 
 def _find_ref_rpr(trs, ttd_cols=2):
-    """Cari format run (rPr) dari sel TTD yang masih berformat; cadangan: rPr tanda paragraf."""
     for tr in trs:
         for tc in tr.tc_lst[-ttd_cols:]:
             for r in tc.iter(qn("w:r")):
@@ -366,7 +332,6 @@ def _find_ref_rpr(trs, ttd_cols=2):
 
 
 def _set_cell_text(tc, table, text, ref_rpr=None):
-    """Isi sel dengan satu paragraf berisi `text`; run baru memakai format `ref_rpr`."""
     cell = _Cell(tc, table)
     for p in cell.paragraphs[1:]:
         p._p.getparent().remove(p._p)
@@ -387,34 +352,25 @@ def _set_cell_text(tc, table, text, ref_rpr=None):
 
 
 def _write_ttd_cell(tc, table, number, real_count, align, ref_rpr):
-    """Tulis nomor TTD (kosong jika melebihi jumlah asesi asli) dan atur rata vertikal."""
     text = f"{number}." if number <= real_count else ""
     _set_cell_text(tc, table, text, ref_rpr)
     _Cell(tc, table).vertical_alignment = align
 
 
 def rebuild_ttd_columns(table, first_row_idx, count, ttd_cols=2, real_count=None):
-    """
-    Bangun ulang kolom TTD berpasangan: tiap 2 baris, sel kiri = nomor ganjil
-    (rata atas) dan sel kanan = nomor genap (rata bawah), keduanya digabung vertikal.
-
-    count      : jumlah baris (harus genap)
-    real_count : jumlah asesi sebenarnya; nomor di atasnya dikosongkan
-    """
+    """Gabungkan vertikal tiap pasangan 2 baris TTD (ganjil di kiri atas, genap di kanan bawah)."""
     real_count = count if real_count is None else real_count
 
     trs = table._tbl.tr_lst
     rows = [trs[first_row_idx + i] for i in range(count)]
-    ref_rpr = _find_ref_rpr(rows, ttd_cols)  # ambil format SEBELUM sel direset
+    ref_rpr = _find_ref_rpr(rows, ttd_cols)
     ttd = [tr.tc_lst[-ttd_cols:] for tr in rows]
 
-    # reset: hapus merge dan teks
     for cells in ttd:
         for tc in cells:
             _set_vmerge(tc, None)
             _set_cell_text(tc, table, "", ref_rpr)
 
-    # isi per pasangan baris
     for start in range(0, count, 2):
         (left_top, right_top), (left_bot, right_bot) = ttd[start], ttd[start + 1]
 
@@ -427,16 +383,7 @@ def rebuild_ttd_columns(table, first_row_idx, count, ttd_cols=2, real_count=None
 
 
 def expand_rows(doc, asesi_list, with_ttd=None):
-    """
-    Tambah baris tabel bila asesi melebihi baris bawaan template.
-
-    with_ttd:
-      None  -> otomatis: kolom TTD dibangun ulang hanya jika header memuat 'Tanda Tangan'
-      True  -> selalu bangun ulang kolom TTD
-      False -> tidak pernah (tabel biasa, mis. Rekomendasi K/BK)
-
-    Tabel TTD dibulatkan ke jumlah genap; baris pengisi diberi '-' agar jadi abu-abu.
-    """
+    """Gandakan baris terakhir tabel asesi bila jumlah peserta melebihi DEFAULT_ROWS."""
     target_count = len(asesi_list)
     if target_count <= DEFAULT_ROWS:
         return
@@ -466,11 +413,7 @@ def expand_rows(doc, asesi_list, with_ttd=None):
             rebuild_ttd_columns(table, first_idx, row_count, ttd_cols=2, real_count=target_count)
 
 
-# =============================================================================
-# 5. PEMROSESAN FILE TEMPLATE
-# =============================================================================
 def save_document(doc, path_out):
-    """Simpan dokumen; kembalikan False bila file terkunci/gagal disimpan."""
     try:
         if os.path.exists(path_out):
             try:
@@ -490,10 +433,7 @@ def save_document(doc, path_out):
 
 
 def hapus_halaman_2(doc):
-    """
-    Hapus halaman ke-2 template (dari judul kedua 'LIST DOKUMEN UJI' sampai akhir dokumen),
-    termasuk page break / section break pemisahnya, agar tidak tersisa halaman kosong.
-    """
+    """Hapus halaman kedua LIST DOKUMEN UJI beserta page break pemisahnya."""
     body = doc.element.body
     children = [el for el in body if el.tag != qn("w:sectPr")]
     judul = [
@@ -504,7 +444,6 @@ def hapus_halaman_2(doc):
         print("  [!] Judul halaman 2 tidak ditemukan di template, halaman 2 tidak dihapus.")
         return
 
-    # mundur melewati paragraf kosong (biasanya pemegang page break) di akhir halaman 1
     start = judul[1]
     while start > 0 and children[start - 1].tag == qn("w:p") and not _elem_text(children[start - 1]).strip():
         start -= 1
@@ -514,7 +453,6 @@ def hapus_halaman_2(doc):
 
     last = children[start - 1] if start else None
     if last is not None and last.tag == qn("w:p"):
-        # buang sisa page break / section break di paragraf terakhir halaman 1
         for br in [b for b in last.iter(qn("w:br")) if b.get(qn("w:type")) == "page"]:
             br.getparent().remove(br)
         ppr = last.find(qn("w:pPr"))
@@ -522,7 +460,7 @@ def hapus_halaman_2(doc):
         if sect is not None:
             ppr.remove(sect)
     else:
-        # dokumen harus diakhiri paragraf setelah tabel; dibuat setipis 1pt agar tidak memicu halaman baru
+        # OOXML mewajibkan elemen paragraf setelah tabel sebelum sectPr penutup.
         spacer = parse_xml(
             f'<w:p {nsdecls("w")}><w:pPr><w:spacing w:before="0" w:after="0" w:line="20" w:lineRule="exact"/>'
             '<w:rPr><w:sz w:val="2"/></w:rPr></w:pPr></w:p>'
@@ -535,7 +473,6 @@ def hapus_halaman_2(doc):
 
 
 def _generate_document(path_in, data, asesi_list, output_filename, halaman_2=True):
-    """Buka template -> (hapus halaman 2) -> perluas baris -> ganti placeholder -> simpan."""
     doc = Document(path_in)
     if not halaman_2:
         hapus_halaman_2(doc)
@@ -549,17 +486,7 @@ def _generate_document(path_in, data, asesi_list, output_filename, halaman_2=Tru
 
 def process_template_file(tmpl_filename, data_dict, asesi_list_for_check=None,
                           is_paired=False, nama_file_asesor=("", ""), halaman_2=True):
-    """
-    Proses satu template. Dokumen berpasangan = satu dokumen per kelompok asesi
-    (hari 1 & hari 2 untuk 1 asesor, atau asesor 1 & asesor 2 untuk 2 asesor).
-
-    data_dict            : dict data, atau tuple (data_1, data_2, buat_kelompok_2) jika is_paired
-    asesi_list_for_check : list asesi, atau tuple (asesi_1, asesi_2) jika is_paired
-    is_paired            : True untuk dokumen per kelompok
-    nama_file_asesor     : (nama asesor kelompok 1, nama asesor kelompok 2) untuk penamaan file
-    halaman_2            : False untuk menghapus halaman 2 template (khusus dokumen tunggal
-                           seperti LIST DOKUMEN UJI)
-    """
+    """Render satu template tunggal atau sepasang dokumen per kelompok asesi."""
     path_in = os.path.join(FOLDER_TEMPLATE, tmpl_filename)
     if not os.path.exists(path_in):
         print(f"  [!] Template tidak ditemukan: {path_in}")
@@ -582,10 +509,10 @@ def process_template_file(tmpl_filename, data_dict, asesi_list_for_check=None,
 
 def process_skema_templates(kode_skema, data_1, data_2, buat_kelompok_2,
                             asesi_1, asesi_2, nama_file_asesor):
-    """Proses semua .docx di folder skema. Rekap dibuat per kelompok; lainnya sekali."""
+    """Render berkas .docx di folder skema (berkas rekap dibuat per kelompok, lainnya sekali)."""
     path_folder_skema = os.path.join(FOLDER_TEMPLATE, "skema", kode_skema)
     if not os.path.isdir(path_folder_skema):
-        return  # peringatan folder tidak ada sudah ditampilkan saat input skema
+        return
 
     templates_skema = sorted(
         f for f in os.listdir(path_folder_skema) if f.lower().endswith(".docx")
@@ -607,9 +534,6 @@ def process_skema_templates(kode_skema, data_1, data_2, buat_kelompok_2,
             process_template_file(relative_template, data_1)
 
 
-# =============================================================================
-# 6. INPUT PENGGUNA
-# =============================================================================
 def input_daftar_asesi():
     print("\n--- [3/3] INPUT DAFTAR ASESI ---")
     print("Masukkan nama asesi satu per satu. Tekan ENTER tanpa mengetik nama untuk SELESAI.")
@@ -640,15 +564,11 @@ def input_kode_skema():
     return kode_skema
 
 
-# =============================================================================
-# 7. MAIN
-# =============================================================================
 def main():
     print("==================================================")
     print("      OTOMATISASI PENGISIAN BERITA ACARA UJK      ")
     print("==================================================\n")
 
-    # --- 1. Data umum, TUK & asesor ---
     print("--- [1/3] INPUT DATA UMUM, TUK & ASESOR ---")
     kode_skema = input_kode_skema()
     nama_skema = input("Nama Skema : ").strip()
@@ -657,11 +577,10 @@ def main():
     daftar_asesor = input_daftar_asesor()
     dua_asesor = len(daftar_asesor) == 2
     asesor_1 = daftar_asesor[0]
-    asesor_2 = daftar_asesor[1] if dua_asesor else asesor_1  # 1 asesor: sama untuk hari 1 & 2
+    asesor_2 = daftar_asesor[1] if dua_asesor else asesor_1
     nama_file_asesor = (buat_nama_file_asesor(asesor_1["nama"]),
                         buat_nama_file_asesor(asesor_2["nama"]))
 
-    # --- 2. Tanggal pelaksanaan & surat tugas ---
     print("\n--- [2/3] INPUT TANGGAL PELAKSANAAN & SURAT TUGAS ---")
     tgl_hari_ini = format_tanggal_indo(datetime.now())
     tgl_surat_tugas = input(
@@ -672,16 +591,14 @@ def main():
     hari_1 = input("Hari UJK - Hari 1 (contoh: Selasa): ").strip()
     tgl_1 = input("Tanggal UJK - Hari 1 (contoh: 15 September 2026): ").strip()
 
-    # --- 3. Daftar asesi ---
     list_asesi = input_daftar_asesi()
     if not list_asesi:
         print("\n[!] Error: Daftar asesi tidak boleh kosong.")
         return
 
-    # 2 asesor -> 1 hari, asesi dibagi per asesor; 1 asesor -> dibagi per hari jika > batas
     asesi_1, asesi_2 = split_asesi_balanced(list_asesi, force=dua_asesor)
     buat_kelompok_2 = bool(asesi_2)
-    nost_2 = nost_1  # default, dipakai dokumen yang butuh Hari 2
+    nost_2 = nost_1
 
     if dua_asesor:
         print(f"\n[Info] 2 asesor: UJK 1 hari, total asesi ({len(list_asesi)} orang) "
@@ -701,9 +618,8 @@ def main():
     else:
         print(f"\n[Info] Total asesi ({len(list_asesi)} orang) <= {MAX_ASESI_PER_HARI}, "
               "hanya diproses untuk 1 HARI UJK.")
-        hari_2, tgl_2 = hari_1, tgl_1  # dipakai dokumen yang butuh Hari 2
+        hari_2, tgl_2 = hari_1, tgl_1
 
-    # --- Data untuk placeholder ---
     common_data = {
         "{{ NAMA_SKEMA }}": nama_skema,
         "{{ NAMA_KEJURUAN }}": nama_kejuruan,
@@ -714,12 +630,10 @@ def main():
         "{{ TANGGAL_SURAT_TUGAS }}": tgl_surat_tugas,
     }
 
-    # Tiap kelompok membawa data asesornya sendiri
     data_1 = build_asesi_data({**common_data, **asesor_placeholders(asesor_1), "{{ NO_SURAT_TUGAS }}": nost_1}, hari_1, tgl_1, asesi_1)
     data_2 = build_asesi_data({**common_data, **asesor_placeholders(asesor_2), "{{ NO_SURAT_TUGAS }}": nost_2}, hari_2, tgl_2, asesi_2)
 
-    # LIST DOKUMEN UJI (1 file, halaman 1 = kelompok 1, halaman 2 = kelompok 2): huruf kapital
-    # (kecuali hari & tanggal). Asesor per halaman: {{ NAMA_ASESOR_1 }} dan {{ NAMA_ASESOR_2 }}.
+    # LIST DOKUMEN UJI memakai huruf kapital dengan tag asesor berindeks per halaman (_1, _2).
     data_combined_upper = upper_values({**common_data, **asesor_placeholders(asesor_1)})
     for n, asesor in enumerate((asesor_1, asesor_2), 1):
         data_combined_upper.update(upper_values(asesor_placeholders(asesor, f"_{n}")))
@@ -730,7 +644,6 @@ def main():
         "{{ TANGGAL_UJK_2 }}": tgl_2,
     }))
 
-    # --- 4. Pemrosesan template ---
     os.makedirs(FOLDER_OUTPUT, exist_ok=True)
     print("\nMemproses pembuatan dokumen...")
 
@@ -746,7 +659,6 @@ def main():
     process_skema_templates(kode_skema, data_1, data_2, buat_kelompok_2,
                             asesi_1, asesi_2, nama_file_asesor)
 
-    # halaman 2 hanya dipakai jika ada kelompok ke-2 (2 hari atau 2 asesor)
     process_template_file(os.path.join("umum", "LIST DOKUMEN UJI.docx"), data_combined_upper,
                           halaman_2=buat_kelompok_2)
 
